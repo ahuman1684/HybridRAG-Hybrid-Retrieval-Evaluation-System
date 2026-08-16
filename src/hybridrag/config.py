@@ -39,12 +39,24 @@ class EmbeddingConfig:
 
 @dataclass
 class RetrievalConfig:
+    # "dense" | "hybrid". Kept as one switch (rather than separate booleans
+    # for "use BM25" / "use fusion") so Phase 5's ablation configs are each
+    # exactly one config value away from each other: (a) dense-only is
+    # mode="dense", (b) dense+BM25 is mode="hybrid" with reranker disabled,
+    # (c) adds reranker.enabled=True on top of (b).
+    mode: str = "hybrid"
+
+    # Candidates pulled from each individual retriever before fusion. Larger
+    # than final_top_k so RRF has enough of each ranking to actually combine -
+    # see hybrid.py for why.
     dense_top_k: int = 20
     sparse_top_k: int = 20
+
     # Reciprocal Rank Fusion constant. 60 is the value from the original RRF
     # paper (Cormack et al., 2009) and is not sensitive to small corpora, so
     # it's left fixed rather than exposed as a tuning knob.
     rrf_k: int = 60
+
     final_top_k: int = 5
 
 
