@@ -104,7 +104,7 @@ class RagPipeline:
 
         return candidates
 
-    def answer(self, query: str, top_k: int | None = None) -> GenerationResult:
+    def _get_generator(self) -> Generator:
         if self._generator is None:
             gen_cfg = self.config.generation
             self._generator = Generator(
@@ -112,5 +112,18 @@ class RagPipeline:
                 max_tokens=gen_cfg.max_tokens,
                 temperature=gen_cfg.temperature,
             )
+        return self._generator
+
+    def generate_from_chunks(self, query: str, chunks: list[ScoredChunk]) -> GenerationResult:
+        """Generate directly from an already-retrieved chunk list.
+
+        Split out from `answer()` so callers that already retrieved chunks
+        for another purpose (the eval harness scores retrieval metrics on
+        the same chunks it then generates from) don't pay for a second,
+        redundant retrieval call just to get an answer.
+        """
+        return self._get_generator().generate(query, chunks)
+
+    def answer(self, query: str, top_k: int | None = None) -> GenerationResult:
         retrieved = self.retrieve(query, top_k=top_k)
-        return self._generator.generate(query, retrieved)
+        return self.generate_from_chunks(query, retrieved)
