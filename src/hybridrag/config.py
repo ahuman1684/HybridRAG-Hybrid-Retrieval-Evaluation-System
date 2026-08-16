@@ -57,13 +57,18 @@ class RetrievalConfig:
     # it's left fixed rather than exposed as a tuning knob.
     rrf_k: int = 60
 
+    # How many candidates to retrieve before reranking, when reranker.enabled
+    # is True ("retrieve top-20, rerank to top-5"). Ignored when reranking is
+    # off, in which case retrieval returns final_top_k directly.
+    candidate_pool_size: int = 20
+
     final_top_k: int = 5
 
 
 @dataclass
 class RerankerConfig:
     model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    enabled: bool = False
+    enabled: bool = True
 
 
 @dataclass

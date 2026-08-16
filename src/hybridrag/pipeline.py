@@ -1,10 +1,12 @@
 """End-to-end orchestration: ingest -> chunk -> embed -> index -> retrieve -> generate.
 
-Phase 1 only wired up dense retrieval. Phase 2 adds BM25 + RRF fusion behind
-the same `retrieve()` method, selected by `config.retrieval.mode` - this is
-what lets Phase 5's ablation study swap retrieval strategies by changing one
-config value rather than one code path per config. Reranking (Phase 3) will
-plug in the same way.
+Phase 1 wired up dense retrieval. Phase 2 added BM25 + RRF fusion behind the
+same `retrieve()` method, selected by `config.retrieval.mode`. Phase 3 adds
+an optional reranking stage after retrieval, selected by
+`config.reranker.enabled` - the combination of these two switches is what
+lets Phase 5's ablation study reproduce configs (a) dense-only, (b)
+dense+BM25, (c) dense+BM25+reranker by changing two config values, not three
+separate code paths.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from hybridrag.ingestion.chunking import chunk_fixed_size, chunk_semantic
 from hybridrag.ingestion.loaders import load_corpus
 from hybridrag.retrieval.dense import DenseIndex
 from hybridrag.retrieval.hybrid import HybridRetriever
+from hybridrag.retrieval.reranker import CrossEncoderReranker
 from hybridrag.retrieval.sparse import BM25Index
 from hybridrag.types import Chunk, GenerationResult, ScoredChunk
 
@@ -35,6 +38,7 @@ class RagPipeline:
         self.hybrid_retriever: HybridRetriever | None = None
         self.chunks: list[Chunk] = []
         self._generator: Generator | None = None
+        self._reranker: CrossEncoderReranker | None = None
 
     def ingest(self, corpus_dir: str) -> list[Chunk]:
         documents = load_corpus(corpus_dir)
@@ -69,19 +73,36 @@ class RagPipeline:
         )
         return chunks
 
+    def _get_reranker(self) -> CrossEncoderReranker:
+        if self._reranker is None:
+            self._reranker = CrossEncoderReranker(model_name=self.config.reranker.model_name)
+        return self._reranker
+
     def retrieve(self, query: str, top_k: int | None = None) -> list[ScoredChunk]:
         cfg = self.config.retrieval
-        k = top_k or cfg.final_top_k
+        rerank_cfg = self.config.reranker
+        final_k = top_k or cfg.final_top_k
+
+        # When reranking, pull a wider candidate pool (default 20) so the
+        # cross-encoder has real alternatives to compare beyond just the
+        # final_k retrieval already would have returned - otherwise
+        # reranking could only ever reorder the same 5 candidates.
+        pool_k = cfg.candidate_pool_size if rerank_cfg.enabled else final_k
 
         if cfg.mode == "dense":
-            return self.dense_index.search(query, top_k=k)
+            candidates = self.dense_index.search(query, top_k=pool_k)
         elif cfg.mode == "hybrid":
             assert self.hybrid_retriever is not None, "call ingest() before retrieve()"
-            return self.hybrid_retriever.retrieve(
-                query, top_k=k, dense_top_k=cfg.dense_top_k, sparse_top_k=cfg.sparse_top_k
+            candidates = self.hybrid_retriever.retrieve(
+                query, top_k=pool_k, dense_top_k=cfg.dense_top_k, sparse_top_k=cfg.sparse_top_k
             )
         else:
             raise ValueError(f"Unknown retrieval mode: {cfg.mode}")
+
+        if rerank_cfg.enabled:
+            candidates = self._get_reranker().rerank(query, candidates, top_k=final_k)
+
+        return candidates
 
     def answer(self, query: str, top_k: int | None = None) -> GenerationResult:
         if self._generator is None:
