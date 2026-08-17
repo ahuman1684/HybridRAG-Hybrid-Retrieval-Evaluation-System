@@ -1,4 +1,4 @@
-# hybridrag
+# HybridRAG – Hybrid Retrieval & Evaluation System
 
 A hybrid (dense + sparse) retrieval-augmented generation pipeline with a
 rigorous evaluation and ablation harness, built to be defensible in a
